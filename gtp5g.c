@@ -35,7 +35,7 @@
 
 #include "gtp5g.h"
 
-#define DRV_VERSION "1.0.3b"
+#define DRV_VERSION "1.0.3r"
 
 int dbg_trace_lvl = 1;
 
@@ -55,7 +55,7 @@ int dbg_trace_lvl = 1;
 #define GTP5G_TRC(dev, fmt, args...) DBG(4, dev, fmt, ##args)
 
 struct local_f_teid {
-    u32     teid;                       // i_teid
+    __be32     teid;                       // i_teid
     struct in_addr gtpu_addr_ipv4;      // self upf ip
 };
 
@@ -123,9 +123,9 @@ struct gtp5g_pdi {
 
 struct outer_header_creation {
     u16    description;
-    u32    teid;                        // o_teid
+    __be32    teid;                        // o_teid
     struct in_addr peer_addr_ipv4;
-    u16 port;
+    __be16 port;
 };
 
 struct forwarding_policy {
@@ -230,10 +230,10 @@ struct gtp5g_pktinfo {
 };
 
 struct gtp5g_emark_pktinfo {
-	u32 teid;
-	u32 peer_addr;
-	u32 local_addr;
-	u32 role_addr;
+	__be32 teid;
+	__be32 peer_addr;
+	__be32 local_addr;
+	__be32 role_addr;
 	
 	struct sock			*sk;
     struct flowi4       fl4;
@@ -254,11 +254,11 @@ struct proc_gtp5g_pdr {
     u16     id;
     u32     precedence;
     u8      ohr;
-    u32     role_addr4;
+    __be32  role_addr4;
 
-    u32     pdi_ue_addr4;
-    u32     pdi_fteid;
-    u32     pdi_gtpu_addr4;
+    __be32  pdi_ue_addr4;
+    __be32  pdi_fteid;
+    __be32  pdi_gtpu_addr4;
     
     u32     far_id;
     u32     qer_id;
@@ -273,8 +273,8 @@ struct proc_gtp5g_far {
 
     //OHC
     u16     description;
-    u32     teid; 
-    u32     peer_addr4;
+    __be32  teid; 
+    __be32  peer_addr4;
 };
 
 struct proc_gtp5g_qer {
@@ -307,15 +307,15 @@ static int unix_sock_send(struct gtp5g_pdr *pdr, void *buf, u32 len)
     memset(&msg, 0, sizeof(msg));
     memset(iov, 0, sizeof(iov));
 
-    iov[0].iov_base = self_hdr;
+    iov[0].iov_base = (void __user *)self_hdr;
     iov[0].iov_len = sizeof(self_hdr);
-    iov[1].iov_base = buf;
+    iov[1].iov_base = (void __user *)buf;
     iov[1].iov_len = len;
 
     for (i = 0; i < msg_iovlen; i++)
         total_iov_len += iov[i].iov_len;
 
-    msg.msg_name = 0;
+    msg.msg_name = NULL;
     msg.msg_namelen = 0;
     iov_iter_init(&msg.msg_iter, WRITE, iov, msg_iovlen, total_iov_len);
     msg.msg_control = NULL;
@@ -396,6 +396,11 @@ static u32 gtp5g_h_initval;
 static inline u32 u32_hashfn(u32 val)
 {
     return jhash_1word(val, gtp5g_h_initval);
+}
+
+static inline u32 be32_hashfn(__be32 val)
+{
+    return jhash_1word((__force u32)val, gtp5g_h_initval);
 }
 
 static inline u32 ipv4_hashfn(__be32 ip)
@@ -480,8 +485,9 @@ static int far_fill(struct gtp5g_far *far, struct gtp5g_dev *gtp, struct genl_in
                 hdr_creation->peer_addr_ipv4.s_addr = nla_get_be32(hdr_creation_attrs[GTP5G_OUTER_HEADER_CREATION_PEER_ADDR_IPV4]);
                 hdr_creation->port = htons(nla_get_u16(hdr_creation_attrs[GTP5G_OUTER_HEADER_CREATION_PORT]));
              } else {
-                u32 old_teid, old_peer_addr;
-                u16 old_port;
+                __be32 old_teid;
+                __be32 old_peer_addr;
+                __be16 old_port;
 
                 hdr_creation = far->fwd_param->hdr_creation;
                 old_teid = hdr_creation->teid;
@@ -580,7 +586,7 @@ static int ipv4_match(__be32 target_addr, __be32 ifa_addr, __be32 ifa_mask) {
     return !((target_addr ^ ifa_addr) & ifa_mask);
 }
 
-static int ports_match(struct range *match_list, int list_len, __be16 port) {
+static int ports_match(struct range *match_list, int list_len, int port) {
     int i;
 
     if (!list_len)
@@ -722,7 +728,7 @@ static int pdr_fill(struct gtp5g_pdr *pdr, struct gtp5g_dev *gtp, struct genl_in
 
     /* Not in 3GPP spec, just used for routing */
     if (info->attrs[GTP5G_PDR_ROLE_ADDR_IPV4]) {
-        pdr->role_addr_ipv4.s_addr = nla_get_u32(info->attrs[GTP5G_PDR_ROLE_ADDR_IPV4]);
+        pdr->role_addr_ipv4.s_addr = nla_get_be32(info->attrs[GTP5G_PDR_ROLE_ADDR_IPV4]);
 	}
 
     /* Not in 3GPP spec, just used for buffering */
@@ -880,12 +886,12 @@ static int pdr_fill(struct gtp5g_pdr *pdr, struct gtp5g_dev *gtp, struct genl_in
                 if (rule_attrs[GTP5G_FLOW_DESCRIPTION_SRC_MASK])
                     rule->smask.s_addr = nla_get_be32(rule_attrs[GTP5G_FLOW_DESCRIPTION_SRC_MASK]);
                 else
-                    rule->smask.s_addr = -1;
+                    rule->smask.s_addr = cpu_to_be32(-1);
 
                 if (rule_attrs[GTP5G_FLOW_DESCRIPTION_DEST_MASK])
                     rule->dmask.s_addr = nla_get_be32(rule_attrs[GTP5G_FLOW_DESCRIPTION_DEST_MASK]);
                 else
-                    rule->dmask.s_addr = -1;
+                    rule->dmask.s_addr = cpu_to_be32(-1);
 
                 if (rule_attrs[GTP5G_FLOW_DESCRIPTION_SRC_PORT]) {
                     u32 *sport_encode = nla_data(rule_attrs[GTP5G_FLOW_DESCRIPTION_SRC_PORT]);
@@ -990,7 +996,7 @@ static int pdr_fill(struct gtp5g_pdr *pdr, struct gtp5g_dev *gtp, struct genl_in
     if ((pdi = pdr->pdi)) {
         if ((f_teid = pdi->f_teid)) {
             last_ppdr = NULL;
-            head = &gtp->i_teid_hash[u32_hashfn(f_teid->teid) % gtp->hash_size];
+            head = &gtp->i_teid_hash[be32_hashfn(f_teid->teid) % gtp->hash_size];
             hlist_for_each_entry_rcu(ppdr, head, hlist_i_teid) {
                 if (pdr->precedence > ppdr->precedence)
                     last_ppdr = ppdr;
@@ -1004,7 +1010,7 @@ static int pdr_fill(struct gtp5g_pdr *pdr, struct gtp5g_dev *gtp, struct genl_in
                 hlist_add_behind_rcu(&pdr->hlist_i_teid, &last_ppdr->hlist_i_teid);
         } else if (pdi->ue_addr_ipv4) {
             last_ppdr = NULL;
-            head = &gtp->addr_hash[u32_hashfn(pdi->ue_addr_ipv4->s_addr) % gtp->hash_size];
+            head = &gtp->addr_hash[ipv4_hashfn(pdi->ue_addr_ipv4->s_addr) % gtp->hash_size];
             hlist_for_each_entry_rcu(ppdr, head, hlist_addr) {
                 if (pdr->precedence > ppdr->precedence)
                     last_ppdr = ppdr;
@@ -1853,7 +1859,7 @@ static void gtp5g_encap_destroy(struct sock *sk)
 }
 
 static struct gtp5g_pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
-    unsigned int hdrlen, u32 teid)
+    unsigned int hdrlen, __be32 teid)
 {
     struct iphdr *iph;
     __be32 *target_addr;
@@ -1879,7 +1885,7 @@ static struct gtp5g_pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff
     iph = (struct iphdr *)(skb->data + hdrlen);
     target_addr = (gtp->role == GTP5G_ROLE_UPF ? &iph->saddr : &iph->daddr);
 
-    head = &gtp->i_teid_hash[u32_hashfn(teid) % gtp->hash_size];
+    head = &gtp->i_teid_hash[be32_hashfn(teid) % gtp->hash_size];
     hlist_for_each_entry_rcu(pdr, head, hlist_i_teid) {
         pdi = pdr->pdi;
         if (!pdi) {
@@ -2566,7 +2572,7 @@ static int gtp5g_genl_fill_pdr(struct sk_buff *skb, u32 snd_portid, u32 snd_seq,
     }
 
     if (pdr->role_addr_ipv4.s_addr) {
-        if (nla_put_u32(skb, GTP5G_PDR_ROLE_ADDR_IPV4, pdr->role_addr_ipv4.s_addr))
+        if (nla_put_be32(skb, GTP5G_PDR_ROLE_ADDR_IPV4, pdr->role_addr_ipv4.s_addr))
             goto genlmsg_fail;
     }
 
@@ -2609,11 +2615,11 @@ static int gtp5g_genl_fill_pdr(struct sk_buff *skb, u32 snd_portid, u32 snd_seq,
                     nla_put_be32(skb, GTP5G_FLOW_DESCRIPTION_DEST_IPV4, rule->dest.s_addr))
                     goto genlmsg_fail;
 
-                if (rule->smask.s_addr != -1)
+                if (rule->smask.s_addr != cpu_to_be32(-1))
                     if (nla_put_be32(skb, GTP5G_FLOW_DESCRIPTION_SRC_MASK, rule->smask.s_addr))
                         goto genlmsg_fail;
 
-                if (rule->dmask.s_addr != -1)
+                if (rule->dmask.s_addr != cpu_to_be32(-1))
                     if (nla_put_be32(skb, GTP5G_FLOW_DESCRIPTION_DEST_MASK, rule->dmask.s_addr))
                         goto genlmsg_fail;
 
