@@ -61,19 +61,19 @@ struct pdr {
     u32 precedence;
     u8 *outer_header_removal;
     struct pdi *pdi;
-    u32 *far_id;
-    struct far *far;
+    u32 *far_id[2];
+    struct far *far[2];
     u32 *qer_id;
     struct qer *qer;
     u32 *urr_id;
     struct urr *urr;
-    
+
     /* deprecated: AF_UNIX socket for buffer */
     struct sockaddr_un addr_unix;
     struct socket *sock_for_buf;
 
     u16 af;
-    struct in_addr role_addr_ipv4;
+    struct in_addr role_addr_ipv4, mptcp_ue_addr_3gpp, mptcp_ue_addr_non_3gpp;
     struct sock *sk;
     struct net_device *dev;
     struct rcu_head rcu_head;
@@ -92,15 +92,15 @@ struct pdr {
 extern void pdr_context_delete(struct pdr *);
 extern struct pdr *find_pdr_by_id(struct gtp5g_dev *, u64, u16);
 extern struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *, struct sk_buff *,
-        unsigned int, u32);
+        unsigned int, u32, bool *);
 extern struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *, struct sk_buff *,
-        unsigned int, __be32);
+        unsigned int, __be32, bool *);
 
 extern void pdr_append(u64, u16, struct pdr *, struct gtp5g_dev *);
 extern void pdr_update_hlist_table(struct pdr *, struct gtp5g_dev *);
 
 extern void unix_sock_client_delete(struct pdr *);
 extern int unix_sock_client_new(struct pdr *);
-extern int unix_sock_client_update(struct pdr *);
+extern int unix_sock_client_update(struct pdr *, bool);
 
 #endif // __PDR_H__

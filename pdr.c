@@ -34,8 +34,10 @@ static void pdr_context_free(struct rcu_head *head)
             kfree(pdi->ue_addr_ipv4);
         if (pdi->f_teid)
             kfree(pdi->f_teid);
-        if (pdr->far_id)
-            kfree(pdr->far_id);
+        if (pdr->far_id[0])
+            kfree(pdr->far_id[0]);
+        if (pdr->far_id[1])
+            kfree(pdr->far_id[1]);
         if (pdr->qer_id)
             kfree(pdr->qer_id);
 
@@ -125,10 +127,10 @@ int unix_sock_client_new(struct pdr *pdr)
 }
 
 // Handle PDR/FAR changed and affect buffering
-int unix_sock_client_update(struct pdr *pdr)
+int unix_sock_client_update(struct pdr *pdr, bool is3GPP)
 {
-    
-    struct far *far = pdr->far;
+
+    struct far *far = pdr->far[(is3GPP)?0:1];
 
     unix_sock_client_delete(pdr);
 
@@ -235,7 +237,7 @@ mismatch:
 }
 
 struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
-        unsigned int hdrlen, u32 teid)
+        unsigned int hdrlen, u32 teid, bool *is3GPP)
 {
 #ifdef MATCH_IP
     struct iphdr *outer_iph;
@@ -279,9 +281,20 @@ struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
                 continue;
     #endif
 #endif
-        if (pdi->ue_addr_ipv4)
-            if (!(pdr->af == AF_INET && *target_addr == pdi->ue_addr_ipv4->s_addr))
+        /* For Supporting ATSSS, also match UE link-specific IP@3GPP and IP@Non-3GPP (MPTCP IP Addresses on UE side)
+        ** Refer to TS 29.244 Annex E Figure E.3.1-1 IP Translation Mode
+        */
+        if (pdr->af == AF_INET){
+            if (pdi->ue_addr_ipv4 && *target_addr == pdi->ue_addr_ipv4->s_addr){
+                *is3GPP = true; // Tackle as default PDR through 3GPP
+            }else if(pdr->mptcp_ue_addr_3gpp.s_addr && *target_addr == pdr->mptcp_ue_addr_3gpp.s_addr){
+                *is3GPP = true;
+            }else if(pdr->mptcp_ue_addr_non_3gpp.s_addr && *target_addr == pdr->mptcp_ue_addr_non_3gpp.s_addr){
+                *is3GPP = false;
+            }else{
                 continue;
+            }
+        }
 
         if (pdi->sdf)
             if (!sdf_filter_match(pdi->sdf, skb, hdrlen, GTP5G_SDF_FILTER_OUT))
@@ -294,7 +307,7 @@ struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
 }
 
 struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *gtp, struct sk_buff *skb,
-        unsigned int hdrlen, __be32 addr)
+        unsigned int hdrlen, __be32 addr, bool *is3GPP)
 {
     struct hlist_head *head;
     struct pdr *pdr;
@@ -306,8 +319,20 @@ struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *gtp, struct sk_buff *skb,
         pdi = pdr->pdi;
 
         // TODO: Move the value we check into first level
-        if (!(pdr->af == AF_INET && pdi->ue_addr_ipv4->s_addr == addr))
-            continue;
+        /* For Supporting ATSSS, also match UE link-specific IP@3GPP and IP@Non-3GPP (MPTCP IP Addresses on UE side)
+        ** Refer to TS 29.244 Annex E Figure E.3.1-1 IP Translation Mode
+        */
+        if (pdr->af == AF_INET){
+            if (pdi->ue_addr_ipv4 && addr == pdi->ue_addr_ipv4->s_addr){
+                *is3GPP = true; // Tackle as default PDR through 3GPP
+            }else if(pdr->mptcp_ue_addr_3gpp.s_addr && addr == pdr->mptcp_ue_addr_3gpp.s_addr){
+                *is3GPP = true;
+            }else if(pdr->mptcp_ue_addr_non_3gpp.s_addr && addr == pdr->mptcp_ue_addr_non_3gpp.s_addr){
+                *is3GPP = false;
+            }else{
+                continue;
+            }
+        }
 
         if (pdi->sdf)
             if (!sdf_filter_match(pdi->sdf, skb, hdrlen, GTP5G_SDF_FILTER_OUT))

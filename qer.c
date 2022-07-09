@@ -73,7 +73,8 @@ void qer_update(struct qer *qer, struct gtp5g_dev *gtp)
     hlist_for_each_entry_rcu(pdr, head, hlist_related_qer) {
         if (*pdr->qer_id == qer->id) {
             pdr->qer = qer;
-            unix_sock_client_update(pdr);
+            // Problem?
+            unix_sock_client_update(pdr, true);
         }
     }
 }

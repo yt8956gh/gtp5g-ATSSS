@@ -10,7 +10,8 @@ enum gtp5g_pdr_attrs {
     GTP5G_PDR_PRECEDENCE,
     GTP5G_PDR_PDI,
     GTP5G_OUTER_HEADER_REMOVAL,
-    GTP5G_PDR_FAR_ID,
+    GTP5G_PDR_FAR_ID_3GPP,
+    GTP5G_PDR_FAR_ID_NON3GPP,
 
     /* Not in 3GPP spec, just used for routing */
     GTP5G_PDR_ROLE_ADDR_IPV4,
@@ -22,6 +23,13 @@ enum gtp5g_pdr_attrs {
 
     GTP5G_PDR_SEID,
     GTP5G_PDR_URR_ID,
+
+    /* Not in 3GPP spec, just used for routing */
+    GTP5G_UE_MPTCP_3GPP_ADDR_IPV4,
+
+    /* Not in 3GPP spec, just used for routing */
+    GTP5G_UE_MPTCP_NON3GPP_ADDR_IPV4,
+
     /* Add newly supported feature ON ABOVE
      * for compatability with older version of
      * free5GC's UPF or libgtp5gnl

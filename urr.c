@@ -72,7 +72,8 @@ void urr_update(struct urr *urr, struct gtp5g_dev *gtp)
     hlist_for_each_entry_rcu(pdr, head, hlist_related_urr) {
         if (*pdr->urr_id == urr->id) {
             pdr->urr = urr;
-            unix_sock_client_update(pdr);
+            // Problem?
+            unix_sock_client_update(pdr, true);
         }
     }
 }

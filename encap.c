@@ -34,13 +34,13 @@ enum msg_type {
 static void gtp5g_encap_disable_locked(struct sock *);
 static int gtp5g_encap_recv(struct sock *, struct sk_buff *);
 static int gtp1u_udp_encap_recv(struct gtp5g_dev *, struct sk_buff *);
-static int gtp5g_rx(struct pdr *, struct sk_buff *, unsigned int, unsigned int);
+static int gtp5g_rx(struct pdr *, struct sk_buff *, unsigned int, unsigned int, bool);
 static int gtp5g_fwd_skb_encap(struct sk_buff *, struct net_device *,
-        unsigned int, struct pdr *);
-static int unix_sock_send(struct pdr *, void *, u32);
-static int gtp5g_fwd_skb_ipv4(struct sk_buff *, 
-    struct net_device *, struct gtp5g_pktinfo *, 
-    struct pdr *);
+        unsigned int, struct pdr *, bool);
+static int unix_sock_send(struct pdr *, void *, u32, bool);
+static int gtp5g_fwd_skb_ipv4(struct sk_buff *,
+    struct net_device *, struct gtp5g_pktinfo *,
+    struct pdr *, bool);
 
 struct sock *gtp5g_encap_enable(int fd, int type, struct gtp5g_dev *gtp){
     struct udp_tunnel_sock_cfg tuncfg = {NULL};
@@ -164,7 +164,7 @@ static int gtp1c_handle_echo_req(struct sk_buff *skb, struct gtp5g_dev *gtp)
 
     flags = req_gtp1->flags;
     if (flags & GTPV1_HDR_FLG_SEQ){
-         req_gtpOptHdr = (struct gtp1_hdr_opt *)(skb->data + sizeof(struct udphdr) 
+         req_gtpOptHdr = (struct gtp1_hdr_opt *)(skb->data + sizeof(struct udphdr)
                                                             + sizeof(struct gtpv1_hdr));
          seq_number = req_gtpOptHdr->seq_number;
     } else {
@@ -172,7 +172,7 @@ static int gtp1c_handle_echo_req(struct sk_buff *skb, struct gtp5g_dev *gtp)
         seq_number = 0;
     }
 
-    pskb_pull(skb, skb->len);          
+    pskb_pull(skb, skb->len);
 
     gtp_pkt = skb_push(skb, sizeof(struct gtpv1_echo_resp));
     if (!gtp_pkt){
@@ -196,13 +196,13 @@ static int gtp1c_handle_echo_req(struct sk_buff *skb, struct gtp5g_dev *gtp)
     gtp_pkt->recov.cnt = 0;
 
     iph = ip_hdr(skb);
-  
-    rt = ip4_find_route(skb, iph, gtp->sk1u, gtp->dev, 
+
+    rt = ip4_find_route(skb, iph, gtp->sk1u, gtp->dev,
         iph->daddr ,
-        iph->saddr, 
+        iph->saddr,
         &fl4);
     if (IS_ERR(rt)) {
-        GTP5G_ERR(gtp->dev, "no route for GTP echo response from %pI4\n", 
+        GTP5G_ERR(gtp->dev, "no route for GTP echo response from %pI4\n",
         &iph->saddr);
         return 1;
     }
@@ -220,12 +220,13 @@ static int gtp1c_handle_echo_req(struct sk_buff *skb, struct gtp5g_dev *gtp)
     return 0;
 }
 
-static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
+static int  gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
 {
     unsigned int hdrlen = sizeof(struct udphdr) + sizeof(struct gtpv1_hdr);
     struct gtpv1_hdr *gtpv1;
     struct pdr *pdr;
     int gtpv1_hdr_len;
+    bool is3GPP = true;
 
     if (!pskb_may_pull(skb, hdrlen)) {
         GTP5G_ERR(gtp->dev, "Failed to pull skb length %#x\n", hdrlen);
@@ -268,7 +269,7 @@ static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
 
     // recalculation gtpv1
     gtpv1 = (struct gtpv1_hdr *)(skb->data + sizeof(struct udphdr));
-    pdr = pdr_find_by_gtp1u(gtp, skb, hdrlen, gtpv1->tid);
+    pdr = pdr_find_by_gtp1u(gtp, skb, hdrlen, gtpv1->tid, &is3GPP);
     // pskb_may_pull() is called in pdr_find_by_gtp1u(), so gtpv1 may be invalidated here.
     // recalculation gtpv1
     gtpv1 = (struct gtpv1_hdr *)(skb->data + sizeof(struct udphdr));
@@ -277,10 +278,10 @@ static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
         return -1;
     }
 
-    return gtp5g_rx(pdr, skb, hdrlen, gtp->role);
+    return gtp5g_rx(pdr, skb, hdrlen, gtp->role, is3GPP);
 }
 
-static int gtp5g_drop_skb_encap(struct sk_buff *skb, struct net_device *dev, 
+static int gtp5g_drop_skb_encap(struct sk_buff *skb, struct net_device *dev,
     struct pdr *pdr)
 {
     pdr->ul_drop_cnt++;
@@ -288,19 +289,19 @@ static int gtp5g_drop_skb_encap(struct sk_buff *skb, struct net_device *dev,
     return 0;
 }
 
-static int gtp5g_buf_skb_encap(struct sk_buff *skb, struct net_device *dev, 
-    unsigned int hdrlen, struct pdr *pdr)
+static int gtp5g_buf_skb_encap(struct sk_buff *skb, struct net_device *dev,
+    unsigned int hdrlen, struct pdr *pdr, bool is3GPP)
 {
     // Get rid of the GTP-U + UDP headers.
     if (iptunnel_pull_header(skb,
-            hdrlen, 
+            hdrlen,
             skb->protocol,
             !net_eq(sock_net(pdr->sk), dev_net(dev)))) {
         GTP5G_ERR(dev, "Failed to pull GTP-U and UDP headers\n");
         return -1;
     }
 
-    if (unix_sock_send(pdr, skb->data, skb_headlen(skb)) < 0) {
+    if (unix_sock_send(pdr, skb->data, skb_headlen(skb), is3GPP) < 0) {
         GTP5G_ERR(dev, "Failed to send skb to unix domain socket PDR(%u)", pdr->id);
         ++pdr->ul_drop_cnt;
     }
@@ -311,7 +312,7 @@ static int gtp5g_buf_skb_encap(struct sk_buff *skb, struct net_device *dev,
 
 /* Function unix_sock_{...} are used to handle buffering */
 // Send PDR ID, FAR action and buffered packet to user space
-static int unix_sock_send(struct pdr *pdr, void *buf, u32 len)
+static int unix_sock_send(struct pdr *pdr, void *buf, u32 len, bool is3GPP)
 {
     struct msghdr msg;
     struct kvec *kov;
@@ -321,7 +322,8 @@ static int unix_sock_send(struct pdr *pdr, void *buf, u32 len)
     int i, rt;
     u8  type_hdr[1] = {TYPE_BUFFER};
     u64 self_seid_hdr[1] = {pdr->seid};
-    u16 self_hdr[2] = {pdr->id, pdr->far->action};
+    // FAR-PROBLEM
+    u16 self_hdr[2] = {pdr->id, pdr->far[(is3GPP)?0:1]->action};
 
     if (!pdr->sock_for_buf) {
         GTP5G_ERR(NULL, "Failed Socket buffer is NULL\n");
@@ -329,7 +331,7 @@ static int unix_sock_send(struct pdr *pdr, void *buf, u32 len)
     }
 
     memset(&msg, 0, sizeof(msg));
-        if (get_api_with_seid() && get_api_with_urr_bar()) {    
+        if (get_api_with_seid() && get_api_with_urr_bar()) {
         msg_kovlen = MSG_URR_BAR_KOV_LEN;
         kov = kmalloc_array(msg_kovlen, sizeof(struct kvec),
             GFP_KERNEL);
@@ -394,10 +396,11 @@ static int unix_sock_send(struct pdr *pdr, void *buf, u32 len)
 }
 
 static int gtp5g_rx(struct pdr *pdr, struct sk_buff *skb,
-    unsigned int hdrlen, unsigned int role)
+    unsigned int hdrlen, unsigned int role, bool is3GPP)
 {
     int rt = -1;
-    struct far *far = pdr->far;
+    struct far *far = pdr->far[(is3GPP)?0:1];
+
     // struct qer *qer = pdr->qer;
 
     if (!far) {
@@ -417,22 +420,24 @@ static int gtp5g_rx(struct pdr *pdr, struct sk_buff *skb,
         // One and only one of the DROP, FORW and BUFF flags shall be set to 1.
         // The NOCP flag may only be set if the BUFF flag is set.
         // The DUPL flag may be set with any of the DROP, FORW, BUFF and NOCP flags.
-        switch(far->action & FAR_ACTION_MASK) {
-        case FAR_ACTION_DROP: 
-            rt = gtp5g_drop_skb_encap(skb, pdr->dev, pdr);
-            break;
-        case FAR_ACTION_FORW:
-            rt = gtp5g_fwd_skb_encap(skb, pdr->dev, hdrlen, pdr);
-            break;
-        case FAR_ACTION_BUFF:
-            rt = gtp5g_buf_skb_encap(skb, pdr->dev, hdrlen, pdr);
-            break;
-        default:
-            GTP5G_ERR(pdr->dev, "Unhandled apply action(%u) in FAR(%u) and related to PDR(%u)\n",
-                far->action, far->id, pdr->id);
+
+        if (far){
+            switch(far->action & FAR_ACTION_MASK) {
+            case FAR_ACTION_DROP:
+                rt = gtp5g_drop_skb_encap(skb, pdr->dev, pdr);
+                break;
+            case FAR_ACTION_FORW:
+                rt = gtp5g_fwd_skb_encap(skb, pdr->dev, hdrlen, pdr, is3GPP);
+                break;
+            case FAR_ACTION_BUFF:
+                rt = gtp5g_buf_skb_encap(skb, pdr->dev, hdrlen, pdr, is3GPP);
+                break;
+            default:
+                GTP5G_ERR(pdr->dev, "Unhandled apply action(%u) in FAR(%u) and related to PDR(%u)\n",
+                    far->action, far->id, pdr->id);
+            }
         }
-        goto out;
-    } 
+    }
 
     // TODO: this action is not supported
     GTP5G_ERR(pdr->dev, "Uplink: PDR(%u) didn't has a OHR information "
@@ -443,9 +448,9 @@ out:
 }
 
 static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
-    unsigned int hdrlen, struct pdr *pdr)
+    unsigned int hdrlen, struct pdr *pdr, bool is3GPP)
 {
-    struct far *far = pdr->far;
+    struct far *far = pdr->far[(is3GPP)?0:1];
     struct forwarding_parameter *fwd_param = far->fwd_param;
     struct outer_header_creation *hdr_creation;
     struct forwarding_policy *fwd_policy;
@@ -472,7 +477,7 @@ static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
                     "due to pdr->pdi->f_teid not exist\n");
                 return -1;
             }
-            
+
             iph->saddr = pdr->pdi->f_teid->gtpu_addr_ipv4.s_addr;
             iph->daddr = hdr_creation->peer_addr_ipv4.s_addr;
             iph->check = 0;
@@ -491,9 +496,9 @@ static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
 
     // Get rid of the GTP-U + UDP headers.
     if (iptunnel_pull_header(skb,
-            hdrlen, 
+            hdrlen,
             skb->protocol,
-            !net_eq(sock_net(pdr->sk), 
+            !net_eq(sock_net(pdr->sk),
             dev_net(dev)))) {
         GTP5G_ERR(dev, "Failed to pull GTP-U and UDP headers\n");
         return -1;
@@ -525,7 +530,7 @@ static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
     return 0;
 }
 
-static int gtp5g_drop_skb_ipv4(struct sk_buff *skb, struct net_device *dev, 
+static int gtp5g_drop_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
     struct pdr *pdr)
 {
     ++pdr->dl_drop_cnt;
@@ -533,49 +538,50 @@ static int gtp5g_drop_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
     return FAR_ACTION_DROP;
 }
 
-static int gtp5g_fwd_skb_ipv4(struct sk_buff *skb, 
-    struct net_device *dev, struct gtp5g_pktinfo *pktinfo, 
-    struct pdr *pdr)
+static int gtp5g_fwd_skb_ipv4(struct sk_buff *skb,
+    struct net_device *dev, struct gtp5g_pktinfo *pktinfo,
+    struct pdr *pdr, bool is3GPP)
 {
     struct rtable *rt;
     struct flowi4 fl4;
     struct iphdr *iph = ip_hdr(skb);
     struct outer_header_creation *hdr_creation;
+    struct far *far = pdr->far[(is3GPP)?0:1];
 
-    if (!(pdr->far && pdr->far->fwd_param &&
-        pdr->far->fwd_param->hdr_creation)) {
+    if (!(far && far->fwd_param &&
+        far->fwd_param->hdr_creation)) {
         GTP5G_ERR(dev, "Unknown RAN address\n");
         goto err;
     }
 
-    hdr_creation = pdr->far->fwd_param->hdr_creation;
-    rt = ip4_find_route(skb, 
-        iph, 
+    hdr_creation = far->fwd_param->hdr_creation;
+    rt = ip4_find_route(skb,
+        iph,
         pdr->sk,
-        dev, 
-        pdr->role_addr_ipv4.s_addr, 
-        hdr_creation->peer_addr_ipv4.s_addr, 
+        dev,
+        pdr->role_addr_ipv4.s_addr,
+        hdr_creation->peer_addr_ipv4.s_addr,
         &fl4);
     if (IS_ERR(rt))
         goto err;
 
     if (!pdr->qer) {
         gtp5g_set_pktinfo_ipv4(pktinfo,
-            pdr->sk, 
-            iph, 
+            pdr->sk,
+            iph,
             hdr_creation,
-            NULL, 
-            rt, 
-            &fl4, 
+            NULL,
+            rt,
+            &fl4,
             dev);
     } else {
         gtp5g_set_pktinfo_ipv4(pktinfo,
-            pdr->sk, 
-            iph, 
-            hdr_creation, 
-            pdr->qer, 
-            rt, 
-            &fl4, 
+            pdr->sk,
+            iph,
+            hdr_creation,
+            pdr->qer,
+            rt,
+            &fl4,
             dev);
     }
 
@@ -591,10 +597,10 @@ err:
 }
 
 static int gtp5g_buf_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
-    struct pdr *pdr)
+    struct pdr *pdr, bool is3GPP)
 {
     // TODO: handle nonlinear part
-    if (unix_sock_send(pdr, skb->data, skb_headlen(skb)) < 0) {
+    if (unix_sock_send(pdr, skb->data, skb_headlen(skb), is3GPP) < 0) {
         GTP5G_ERR(dev, "Failed to send skb to unix domain socket PDR(%u)", pdr->id);
         ++pdr->dl_drop_cnt;
     }
@@ -611,30 +617,31 @@ int gtp5g_handle_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
     struct far *far;
     //struct gtp5g_qer *qer;
     struct iphdr *iph;
+    bool is3GPP = true;
 
     /* Read the IP destination address and resolve the PDR.
      * Prepend PDR header with TEI/TID from PDR.
      */
     iph = ip_hdr(skb);
     if (gtp->role == GTP5G_ROLE_UPF)
-        pdr = pdr_find_by_ipv4(gtp, skb, 0, iph->daddr);
+        pdr = pdr_find_by_ipv4(gtp, skb, 0, iph->daddr, &is3GPP);
     else
-        pdr = pdr_find_by_ipv4(gtp, skb, 0, iph->saddr);
+        pdr = pdr_find_by_ipv4(gtp, skb, 0, iph->saddr, &is3GPP);
 
     if (!pdr) {
         GTP5G_ERR(dev, "no PDR found for %pI4, skip\n", &iph->daddr);
         return -ENOENT;
     }
 
-    /* TODO: QoS rule have to apply before apply FAR 
+    /* TODO: QoS rule have to apply before apply FAR
      * */
     //qer = pdr->qer;
     //if (qer) {
-    //    GTP5G_ERR(dev, "%s:%d QER Rule found, id(%#x) qfi(%#x) TODO\n", 
+    //    GTP5G_ERR(dev, "%s:%d QER Rule found, id(%#x) qfi(%#x) TODO\n",
     //            __func__, __LINE__, qer->id, qer->qfi);
     //}
 
-    far = pdr->far;
+    far = pdr->far[(is3GPP?0:1)];
     if (far) {
         // One and only one of the DROP, FORW and BUFF flags shall be set to 1.
         // The NOCP flag may only be set if the BUFF flag is set.
@@ -643,9 +650,9 @@ int gtp5g_handle_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
         case FAR_ACTION_DROP:
             return gtp5g_drop_skb_ipv4(skb, dev, pdr);
         case FAR_ACTION_FORW:
-            return gtp5g_fwd_skb_ipv4(skb, dev, pktinfo, pdr);
+            return gtp5g_fwd_skb_ipv4(skb, dev, pktinfo, pdr, is3GPP);
         case FAR_ACTION_BUFF:
-            return gtp5g_buf_skb_ipv4(skb, dev, pdr);
+            return gtp5g_buf_skb_ipv4(skb, dev, pdr, is3GPP);
         default:
             GTP5G_ERR(dev, "Unspec apply action(%u) in FAR(%u) and related to PDR(%u)",
                 far->action, far->id, pdr->id);

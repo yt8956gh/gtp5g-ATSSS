@@ -3,6 +3,7 @@
 #include "pdr.h"
 #include "seid.h"
 #include "hash.h"
+#include "log.h"
 
 static void seid_far_id_to_hex_str(u64 seid_int, u32 far_id, char *buff)
 {
@@ -46,8 +47,9 @@ void far_context_delete(struct far *far)
     seid_far_id_to_hex_str(far->seid, far->id, seid_far_id_hexstr);
     head = &gtp->related_far_hash[str_hashfn(seid_far_id_hexstr) % gtp->hash_size];
     hlist_for_each_entry_rcu(pdr, head, hlist_related_far) {
-        if (pdr->seid == far->seid && *pdr->far_id == far->id) {
-            pdr->far = NULL;
+        if (pdr->seid == far->seid) {
+            if (*pdr->far_id[0] == far->id) pdr->far[0] = NULL;
+            if (*pdr->far_id[1] == far->id) pdr->far[1] = NULL;
             unix_sock_client_delete(pdr);
         }
     }
@@ -77,17 +79,26 @@ void far_update(struct far *far, struct gtp5g_dev *gtp, u8 *flag,
     struct pdr *pdr;
     struct hlist_head *head;
     char seid_far_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
+    bool is3GPP;
 
     seid_far_id_to_hex_str(far->seid, far->id, seid_far_id_hexstr);
     head = &gtp->related_far_hash[str_hashfn(seid_far_id_hexstr) % gtp->hash_size];
     hlist_for_each_entry_rcu(pdr, head, hlist_related_far) {
-        if (pdr->seid == far->seid && *pdr->far_id == far->id) {
+        if (pdr->seid == far->seid) {
+            if(*pdr->far_id[0] == far->id){
+                is3GPP = true;
+                pdr->far[0] = far;
+            }else if(*pdr->far_id[1] == far->id){
+                is3GPP = false;
+                pdr->far[1] = far;
+            }else{
+                GTP5G_ERR(NULL, "The updated FAR[%u] not belong to PDR[%u] with same SEID\n", far->id, pdr->id);
+            }
             if (flag != NULL && *flag == 1) {
                 epkt_info->role_addr = pdr->role_addr_ipv4.s_addr;
                 epkt_info->sk = pdr->sk;
             }
-            pdr->far = far;
-            unix_sock_client_update(pdr);
+            unix_sock_client_update(pdr, is3GPP);
         }
     }
 }
@@ -115,8 +126,15 @@ int far_get_pdr_ids(u16 *ids, int n, struct far *far, struct gtp5g_dev *gtp)
     hlist_for_each_entry_rcu(pdr, head, hlist_related_far) {
         if (i >= n)
             break;
-        if (pdr->seid == far->seid && *pdr->far_id == far->id)
+        if (pdr->seid != far->seid){
+            continue;
+        }
+        if(pdr->far_id[0] && *pdr->far_id[0] == far->id){ // 3GPP
             ids[i++] = pdr->id;
+        }
+        if(pdr->far_id[1] && *pdr->far_id[1] == far->id){ // Non3GPP
+            ids[i++] = pdr->id;
+        }
     }
     return i;
 }

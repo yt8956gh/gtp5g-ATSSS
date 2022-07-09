@@ -21,8 +21,8 @@ struct proc_gtp5g_pdr {
     u32     pdi_ue_addr4;
     u32     pdi_fteid;
     u32     pdi_gtpu_addr4;
-    
-    u32     far_id;
+
+    u32     far_id[2];
     u32     qer_id;
 
     u64     ul_drop_cnt;
@@ -42,7 +42,7 @@ struct proc_gtp5g_far {
 
     //OHC
     u16     description;
-    u32     teid; 
+    u32     teid;
     u32     peer_addr4;
 };
 
@@ -74,7 +74,7 @@ void init_proc_gtp5g_dev_list(){
     INIT_LIST_HEAD(&proc_gtp5g_dev);
 }
 
-static int gtp5g_dbg_read(struct seq_file *s, void *v) 
+static int gtp5g_dbg_read(struct seq_file *s, void *v)
 {
     seq_printf(s, "gtp5g kerenl debug level range: 0~4\n");
     seq_printf(s, "\t 0 -> Logging\n");
@@ -87,7 +87,7 @@ static int gtp5g_dbg_read(struct seq_file *s, void *v)
 }
 
 static ssize_t proc_dbg_write(struct file *filp, const char __user *buffer,
-    size_t len, loff_t *dptr) 
+    size_t len, loff_t *dptr)
 {
     char buf[16];
     unsigned long buf_len = min(len, sizeof(buf) - 1);
@@ -97,18 +97,18 @@ static ssize_t proc_dbg_write(struct file *filp, const char __user *buffer,
         GTP5G_ERR(NULL, "Failed to read buffer: %s\n", buffer);
         goto err;
     }
-    
+
     buf[buf_len] = 0;
     if (sscanf(buf, "%d", &dbg) != 1) {
         GTP5G_ERR(NULL, "Failed to read debug level: %s\n", buffer);
         goto err;
     }
-  
+
     if (dbg < 0 || dbg > 4) {
         GTP5G_ERR(NULL, "Failed to set debug level: %d <0 or >4\n", dbg);
         goto err;
     }
-    
+
     set_dbg_lvl(dbg);
     return strnlen(buf, buf_len);
 err:
@@ -120,7 +120,7 @@ static int proc_dbg_read(struct inode *inode, struct file *file)
     return single_open(file, gtp5g_dbg_read, NULL);
 }
 
-static int gtp5g_pdr_read(struct seq_file *s, void *v) 
+static int gtp5g_pdr_read(struct seq_file *s, void *v)
 {
     char role_addr[35];
     char pdi_ue_addr[35];
@@ -130,7 +130,7 @@ static int gtp5g_pdr_read(struct seq_file *s, void *v)
         seq_printf(s, "Given PDR ID does not exists\n");
         return -1;
     }
-    
+
     seq_printf(s, "PDR: \n");
     seq_printf(s, "\t SEID : %llu\n", proc_pdr.seid);
     seq_printf(s, "\t ID : %u\n", proc_pdr.id);
@@ -143,7 +143,8 @@ static int gtp5g_pdr_read(struct seq_file *s, void *v)
     seq_printf(s, "\t PDI TEID: %#08x\n", ntohl(proc_pdr.pdi_fteid));
     ip_string(pdu_gtpu_addr, proc_pdr.pdi_gtpu_addr4);
     seq_printf(s, "\t PDU GTPU Addr4: %s(%#08x)\n", pdu_gtpu_addr, ntohl(proc_pdr.pdi_gtpu_addr4));
-    seq_printf(s, "\t FAR ID: %u\n", proc_pdr.far_id);
+    seq_printf(s, "\t FAR ID 1: %u\n", proc_pdr.far_id[0]);
+    seq_printf(s, "\t FAR ID 2: %u\n", proc_pdr.far_id[1]);
     seq_printf(s, "\t QER ID: %u\n", proc_pdr.qer_id);
     seq_printf(s, "\t UL Drop Count: %#llx\n", proc_pdr.ul_drop_cnt);
     seq_printf(s, "\t DL Drop Count: %#llx\n", proc_pdr.dl_drop_cnt);
@@ -154,13 +155,13 @@ static int gtp5g_pdr_read(struct seq_file *s, void *v)
     return 0;
 }
 
-static int gtp5g_far_read(struct seq_file *s, void *v) 
+static int gtp5g_far_read(struct seq_file *s, void *v)
 {
     if (!proc_far_id) {
         seq_printf(s, "Given FAR ID does not exists\n");
         return -1;
     }
-    
+
     seq_printf(s, "FAR: \n");
     seq_printf(s, "\t SEID : %llu\n", proc_far.seid);
     seq_printf(s, "\t ID : %u\n", proc_far.id);
@@ -171,13 +172,13 @@ static int gtp5g_far_read(struct seq_file *s, void *v)
     return 0;
 }
 
-static int gtp5g_qer_read(struct seq_file *s, void *v) 
+static int gtp5g_qer_read(struct seq_file *s, void *v)
 {
     if (!proc_qer_id) {
         seq_printf(s, "Given QER ID does not exists\n");
         return -1;
     }
-    
+
     seq_printf(s, "QER: \n");
     seq_printf(s, "\t SEID : %llu\n", proc_qer.seid);
     seq_printf(s, "\t ID : %u\n", proc_qer.id);
@@ -186,7 +187,7 @@ static int gtp5g_qer_read(struct seq_file *s, void *v)
 }
 
 static ssize_t proc_pdr_write(struct file *filp, const char __user *buffer,
-    size_t len, loff_t *dptr) 
+    size_t len, loff_t *dptr)
 {
     char buf[128], dev_name[32];
     u8 found = 0;
@@ -198,13 +199,13 @@ static ssize_t proc_pdr_write(struct file *filp, const char __user *buffer,
         GTP5G_ERR(NULL, "Failed to read buffer: %s\n", buf);
         goto err;
     }
-    
+
     buf[buf_len] = 0;
     if (sscanf(buf, "%s %llu %hu", dev_name, &proc_seid, &proc_pdr_id) != 3) {
         GTP5G_ERR(NULL, "proc write of PDR Dev & ID: %s is not valid\n", buf);
         goto err;
     }
-    
+
     list_for_each_entry_rcu(gtp, &proc_gtp5g_dev, proc_list) {
         if (strcmp(dev_name, netdev_name(gtp->dev)) == 0) {
             found = 1;
@@ -221,20 +222,20 @@ static ssize_t proc_pdr_write(struct file *filp, const char __user *buffer,
         GTP5G_ERR(NULL, "Given SEID : %llu PDR ID : %u not exists\n", proc_seid, proc_pdr_id);
         goto err;
     }
-    
+
     memset(&proc_pdr, 0, sizeof(proc_pdr));
     proc_pdr.id = pdr->id;
     proc_pdr.seid = pdr->seid;
     proc_pdr.precedence = pdr->precedence;
-    
-    if (pdr->outer_header_removal) 
+
+    if (pdr->outer_header_removal)
         proc_pdr.ohr = *pdr->outer_header_removal;
-    
+
     if (pdr->role_addr_ipv4.s_addr)
         proc_pdr.role_addr4 = pdr->role_addr_ipv4.s_addr;
-    
+
     if (pdr->pdi) {
-        if (pdr->pdi->ue_addr_ipv4) 
+        if (pdr->pdi->ue_addr_ipv4)
             proc_pdr.pdi_ue_addr4 = pdr->pdi->ue_addr_ipv4->s_addr;
         if (pdr->pdi->f_teid) {
             proc_pdr.pdi_fteid = pdr->pdi->f_teid->teid;
@@ -242,9 +243,12 @@ static ssize_t proc_pdr_write(struct file *filp, const char __user *buffer,
         }
     }
 
-    if (pdr->far_id)
-        proc_pdr.far_id = *pdr->far_id;
-    
+    if (pdr->far_id[0])
+        proc_pdr.far_id[0] = *pdr->far_id[0];
+
+    if (pdr->far_id[1])
+        proc_pdr.far_id[1] = *pdr->far_id[1];
+
     if (pdr->qer_id)
         proc_pdr.qer_id = *pdr->qer_id;
 
@@ -263,7 +267,7 @@ err:
 }
 
 static ssize_t proc_far_write(struct file *filp, const char __user *buffer,
-    size_t len, loff_t *dptr) 
+    size_t len, loff_t *dptr)
 {
     char buf[128], dev_name[32];
     u8 found = 0;
@@ -275,13 +279,13 @@ static ssize_t proc_far_write(struct file *filp, const char __user *buffer,
         GTP5G_ERR(NULL, "Failed to read buffer: %s\n", buf);
         goto err;
     }
-    
+
     buf[buf_len] = 0;
     if (sscanf(buf, "%s %llu %u", dev_name, &proc_seid, &proc_far_id) != 3) {
         GTP5G_ERR(NULL, "proc write of FAR Dev & ID: %s is not valid\n", buf);
         goto err;
     }
-    
+
     list_for_each_entry_rcu(gtp, &proc_gtp5g_dev, proc_list) {
         if (strcmp(dev_name, netdev_name(gtp->dev)) == 0) {
             found = 1;
@@ -298,12 +302,12 @@ static ssize_t proc_far_write(struct file *filp, const char __user *buffer,
         GTP5G_ERR(NULL, "Given FAR ID : %u not exists\n", proc_far_id);
         goto err;
     }
-    
+
     memset(&proc_far, 0, sizeof(proc_far));
     proc_far.id = far->id;
     proc_far.seid = far->seid;
     proc_far.action = far->action;
-   
+
     if (far->fwd_param) {
         if (far->fwd_param->hdr_creation) {
             proc_far.description = far->fwd_param->hdr_creation->description;
@@ -319,25 +323,25 @@ err:
 }
 
 static ssize_t proc_qer_write(struct file *filp, const char __user *buffer,
-    size_t len, loff_t *dptr) 
+    size_t len, loff_t *dptr)
 {
     char buf[128], dev_name[32];
     u8 found = 0;
     unsigned long buf_len = min(sizeof(buf) - 1, len);
     struct qer *qer;
     struct gtp5g_dev *gtp;
-    
+
     if (copy_from_user(buf, buffer, buf_len)) {
         GTP5G_ERR(NULL, "Failed to read buffer: %s\n", buf);
         goto err;
     }
-    
+
     buf[buf_len] = 0;
     if (sscanf(buf, "%s %llu %u", dev_name, &proc_seid, &proc_qer_id) != 3) {
         GTP5G_ERR(NULL, "proc write of QER Dev & ID: %s is not valid\n", buf);
         goto err;
     }
-    
+
     list_for_each_entry_rcu(gtp, &proc_gtp5g_dev, proc_list) {
         if (strcmp(dev_name, netdev_name(gtp->dev)) == 0) {
             found = 1;
@@ -354,7 +358,7 @@ static ssize_t proc_qer_write(struct file *filp, const char __user *buffer,
         GTP5G_ERR(NULL, "Given QER ID : %u not exists\n", proc_qer_id);
         goto err;
     }
-    
+
     memset(&proc_qer, 0, sizeof(proc_qer));
     proc_qer.id = qer->id;
     proc_qer.seid = qer->seid;
@@ -485,7 +489,7 @@ int create_proc(void)
         goto remove_pdr_proc;
     }
 
-    proc_gtp5g_qer = proc_create("qer", (S_IFREG | S_IRUGO | S_IWUGO), 
+    proc_gtp5g_qer = proc_create("qer", (S_IFREG | S_IRUGO | S_IWUGO),
         proc_gtp5g, &proc_gtp5g_qer_ops);
     if (!proc_gtp5g_qer) {
         GTP5G_ERR(NULL, "Failed to create /proc/gtp5g/qer\n");

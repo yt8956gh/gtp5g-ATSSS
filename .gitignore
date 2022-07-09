@@ -4,5 +4,7 @@
 *.cmd
 *.mod
 *.mod.c
+*.ver
 Module.symvers
 modules.order
+.vscode/

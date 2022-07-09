@@ -13,8 +13,11 @@ static const struct nla_policy gtp5g_genl_pdr_policy[GTP5G_PDR_ATTR_MAX + 1] = {
     [GTP5G_PDR_PRECEDENCE]                      = { .type = NLA_U32, },
     [GTP5G_PDR_PDI]                             = { .type = NLA_NESTED, },
     [GTP5G_OUTER_HEADER_REMOVAL]                = { .type = NLA_U8, },
-    [GTP5G_PDR_FAR_ID]                          = { .type = NLA_U32, },
+    [GTP5G_PDR_FAR_ID_3GPP]                     = { .type = NLA_U32, },
+    [GTP5G_PDR_FAR_ID_NON3GPP]                  = { .type = NLA_U32, },
     [GTP5G_PDR_QER_ID]                          = { .type = NLA_U32, },
+    [GTP5G_UE_MPTCP_3GPP_ADDR_IPV4]             = { .type = NLA_U32, },
+    [GTP5G_UE_MPTCP_NON3GPP_ADDR_IPV4]          = { .type = NLA_U32, },
 };
 
 static const struct nla_policy gtp5g_genl_far_policy[GTP5G_FAR_ATTR_MAX + 1] = {
@@ -133,7 +136,7 @@ static const struct genl_ops gtp5g_genl_ops[] = {
         .doit = gtp5g_genl_get_bar,
         .dumpit = gtp5g_genl_dump_bar,
         .flags = GENL_ADMIN_PERM,
-    }, 
+    },
 };
 
 struct genl_family gtp5g_genl_family __ro_after_init = {

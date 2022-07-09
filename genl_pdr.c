@@ -69,11 +69,11 @@ int gtp5g_genl_add_pdr(struct sk_buff *skb, struct genl_info *info)
         seid = 0;
     }
 
-    /* 
-     * For backward compatability: 
-     * If information has GTP5G_PDR_URR_ID, 
-     * it means that user use the API which support 
-     * URR and BAR feature. Otherwise, use the older API. 
+    /*
+     * For backward compatability:
+     * If information has GTP5G_PDR_URR_ID,
+     * it means that user use the API which support
+     * URR and BAR feature. Otherwise, use the older API.
      */
     if (info->attrs[GTP5G_PDR_URR_ID])
         set_api_with_urr_bar(true);
@@ -207,7 +207,7 @@ int gtp5g_genl_del_pdr(struct sk_buff *skb, struct genl_info *info)
     rcu_read_unlock();
 
     return 0;
-}  
+}
 
 int gtp5g_genl_get_pdr(struct sk_buff *skb, struct genl_info *info)
 {
@@ -276,7 +276,7 @@ int gtp5g_genl_get_pdr(struct sk_buff *skb, struct genl_info *info)
     rcu_read_unlock();
 
     return genlmsg_unicast(genl_info_net(info), skb_ack, info->snd_portid);
-}  
+}
 
 int gtp5g_genl_dump_pdr(struct sk_buff *skb, struct netlink_callback *cb)
 {
@@ -329,7 +329,7 @@ int gtp5g_genl_dump_pdr(struct sk_buff *skb, struct netlink_callback *cb)
     cb->args[5] = 1;
 out:
     return skb->len;
-}  
+}
 
 
 static int pdr_fill(struct pdr *pdr, struct gtp5g_dev *gtp, struct genl_info *info)
@@ -371,15 +371,36 @@ static int pdr_fill(struct pdr *pdr, struct gtp5g_dev *gtp, struct genl_info *in
         strncpy(pdr->addr_unix.sun_path, str, nla_len(info->attrs[GTP5G_PDR_UNIX_SOCKET_PATH]));
     }
 
-    if (info->attrs[GTP5G_PDR_FAR_ID]) {
-        if (!pdr->far_id) {
-            pdr->far_id = kzalloc(sizeof(*pdr->far_id), GFP_ATOMIC);
-            if (!pdr->far_id)
+    if (info->attrs[GTP5G_PDR_FAR_ID_3GPP]) {
+        if (!pdr->far_id[0]) {
+            pdr->far_id[0] = kzalloc(sizeof(*pdr->far_id[0]), GFP_ATOMIC);
+            if (!pdr->far_id[0])
                 return -ENOMEM;
         }
-        *pdr->far_id = nla_get_u32(info->attrs[GTP5G_PDR_FAR_ID]);
-        pdr->far = find_far_by_id(gtp, pdr->seid, *pdr->far_id);
-        far_set_pdr(pdr->seid, *pdr->far_id, &pdr->hlist_related_far, gtp);
+        *pdr->far_id[0] = nla_get_u32(info->attrs[GTP5G_PDR_FAR_ID_3GPP]);
+        pdr->far[0] = find_far_by_id(gtp, pdr->seid, *pdr->far_id[0]);
+        far_set_pdr(pdr->seid, *pdr->far_id[0], &pdr->hlist_related_far, gtp);
+    }
+
+    if (info->attrs[GTP5G_PDR_FAR_ID_NON3GPP]) {
+        if (!pdr->far_id[1]) {
+            pdr->far_id[1] = kzalloc(sizeof(*pdr->far_id[1]), GFP_ATOMIC);
+            if (!pdr->far_id[1])
+                return -ENOMEM;
+        }
+        *pdr->far_id[1] = nla_get_u32(info->attrs[GTP5G_PDR_FAR_ID_NON3GPP]);
+        pdr->far[1] = find_far_by_id(gtp, pdr->seid, *pdr->far_id[1]);
+        far_set_pdr(pdr->seid, *pdr->far_id[1], &pdr->hlist_related_far, gtp);
+    }
+
+    pdr->mptcp_ue_addr_3gpp.s_addr = 0;
+    if (info->attrs[GTP5G_UE_MPTCP_3GPP_ADDR_IPV4]) {
+        pdr->mptcp_ue_addr_3gpp.s_addr = nla_get_u32(info->attrs[GTP5G_UE_MPTCP_3GPP_ADDR_IPV4]);
+    }
+
+    pdr->mptcp_ue_addr_non_3gpp.s_addr = 0;
+    if (info->attrs[GTP5G_UE_MPTCP_NON3GPP_ADDR_IPV4]) {
+        pdr->mptcp_ue_addr_non_3gpp.s_addr = nla_get_u32(info->attrs[GTP5G_UE_MPTCP_NON3GPP_ADDR_IPV4]);
     }
 
     if (info->attrs[GTP5G_PDR_QER_ID]) {
@@ -393,7 +414,8 @@ static int pdr_fill(struct pdr *pdr, struct gtp5g_dev *gtp, struct genl_info *in
         qer_set_pdr(pdr->seid, *pdr->qer_id, &pdr->hlist_related_qer, gtp);
     }
 
-    if (unix_sock_client_update(pdr) < 0)
+    // Problem?
+    if (unix_sock_client_update(pdr, true) < 0)
         return -EINVAL;
 
     if (info->attrs[GTP5G_PDR_PDI]) {
@@ -796,8 +818,13 @@ static int gtp5g_genl_fill_pdr(struct sk_buff *skb, u32 snd_portid, u32 snd_seq,
             goto genlmsg_fail;
     }
 
-    if (pdr->far_id) {
-        if (nla_put_u32(skb, GTP5G_PDR_FAR_ID, *pdr->far_id))
+    if (pdr->far_id[0]) {
+        if (nla_put_u32(skb, GTP5G_PDR_FAR_ID_3GPP, *pdr->far_id[0]))
+            goto genlmsg_fail;
+    }
+
+    if (pdr->far_id[1]) {
+        if (nla_put_u32(skb, GTP5G_PDR_FAR_ID_NON3GPP, *pdr->far_id[1]))
             goto genlmsg_fail;
     }
 
