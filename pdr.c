@@ -319,8 +319,9 @@ struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *gtp, struct sk_buff *skb,
         pdi = pdr->pdi;
 
         // TODO: Move the value we check into first level
-        /* For Supporting ATSSS, also match UE link-specific IP@3GPP and IP@Non-3GPP (MPTCP IP Addresses on UE side)
-        ** Refer to TS 29.244 Annex E Figure E.3.1-1 IP Translation Mode
+        /* For supporting ATSSS, also match UE link-specific IP@3GPP and
+        ** IP@Non-3GPP (MPTCP IP Addresses on UE side) when tackle DL traffic.
+        ** Refer to TS 29.244 V16.9.1 (2021-09) Annex E Figure E.3.1-1 IP Translation Mode
         */
         if (pdr->af == AF_INET){
             if (pdi->ue_addr_ipv4 && addr == pdi->ue_addr_ipv4->s_addr){

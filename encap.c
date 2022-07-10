@@ -436,6 +436,7 @@ static int gtp5g_rx(struct pdr *pdr, struct sk_buff *skb,
                 GTP5G_ERR(pdr->dev, "Unhandled apply action(%u) in FAR(%u) and related to PDR(%u)\n",
                     far->action, far->id, pdr->id);
             }
+            goto out;
         }
     }
 
@@ -550,7 +551,7 @@ static int gtp5g_fwd_skb_ipv4(struct sk_buff *skb,
 
     if (!(far && far->fwd_param &&
         far->fwd_param->hdr_creation)) {
-        GTP5G_ERR(dev, "Unknown RAN address\n");
+        GTP5G_ERR(dev, "Unknown RAN address in FAR[%u]\n", far->id);
         goto err;
     }
 
