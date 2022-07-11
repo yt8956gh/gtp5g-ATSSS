@@ -307,7 +307,7 @@ struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
 }
 
 struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *gtp, struct sk_buff *skb,
-        unsigned int hdrlen, __be32 addr, bool *is3GPP)
+        unsigned int hdrlen, __be32 addr, int *addrType)
 {
     struct hlist_head *head;
     struct pdr *pdr;
@@ -325,11 +325,11 @@ struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *gtp, struct sk_buff *skb,
         */
         if (pdr->af == AF_INET){
             if (pdi->ue_addr_ipv4 && addr == pdi->ue_addr_ipv4->s_addr){
-                *is3GPP = true; // Tackle as default PDR through 3GPP
+                *addrType = AT_DN_ADDR; // If addr is DN IP Address, traffic will go through 3GPP by default.
             }else if(pdr->mptcp_ue_addr_3gpp.s_addr && addr == pdr->mptcp_ue_addr_3gpp.s_addr){
-                *is3GPP = true;
+                *addrType = AT_MPTCP_ADDR_3GPP;
             }else if(pdr->mptcp_ue_addr_non_3gpp.s_addr && addr == pdr->mptcp_ue_addr_non_3gpp.s_addr){
-                *is3GPP = false;
+                *addrType = AT_MPTCP_ADDR_NON3GPP;
             }else{
                 continue;
             }

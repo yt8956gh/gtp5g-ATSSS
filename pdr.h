@@ -15,6 +15,12 @@
 
 #define SEID_U32ID_HEX_STR_LEN 24
 
+enum addr_type {
+    AT_MPTCP_ADDR_3GPP = 1,
+    AT_MPTCP_ADDR_NON3GPP,
+    AT_DN_ADDR,
+};
+
 struct local_f_teid {
     u32 teid;
     struct in_addr gtpu_addr_ipv4;
@@ -94,7 +100,7 @@ extern struct pdr *find_pdr_by_id(struct gtp5g_dev *, u64, u16);
 extern struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *, struct sk_buff *,
         unsigned int, u32, bool *);
 extern struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *, struct sk_buff *,
-        unsigned int, __be32, bool *);
+        unsigned int, __be32, int *);
 
 extern void pdr_append(u64, u16, struct pdr *, struct gtp5g_dev *);
 extern void pdr_update_hlist_table(struct pdr *, struct gtp5g_dev *);

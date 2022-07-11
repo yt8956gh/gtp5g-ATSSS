@@ -81,9 +81,6 @@ void far_update(struct far *far, struct gtp5g_dev *gtp, u8 *flag,
     char seid_far_id_hexstr[SEID_U32ID_HEX_STR_LEN] = {0};
     bool is3GPP;
 
-    GTP5G_ERR(NULL, "far_update: Updated FAR[%u]\n", far->id);
-
-
     seid_far_id_to_hex_str(far->seid, far->id, seid_far_id_hexstr);
     head = &gtp->related_far_hash[str_hashfn(seid_far_id_hexstr) % gtp->hash_size];
     hlist_for_each_entry_rcu(pdr, head, hlist_related_far) {

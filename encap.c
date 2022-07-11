@@ -37,10 +37,10 @@ static int gtp1u_udp_encap_recv(struct gtp5g_dev *, struct sk_buff *);
 static int gtp5g_rx(struct pdr *, struct sk_buff *, unsigned int, unsigned int, bool);
 static int gtp5g_fwd_skb_encap(struct sk_buff *, struct net_device *,
         unsigned int, struct pdr *, bool);
-static int unix_sock_send(struct pdr *, void *, u32, bool);
+static int unix_sock_send(struct pdr *, void *, u32, int);
 static int gtp5g_fwd_skb_ipv4(struct sk_buff *,
     struct net_device *, struct gtp5g_pktinfo *,
-    struct pdr *, bool);
+    struct pdr *, int);
 
 struct sock *gtp5g_encap_enable(int fd, int type, struct gtp5g_dev *gtp){
     struct udp_tunnel_sock_cfg tuncfg = {NULL};
@@ -312,7 +312,7 @@ static int gtp5g_buf_skb_encap(struct sk_buff *skb, struct net_device *dev,
 
 /* Function unix_sock_{...} are used to handle buffering */
 // Send PDR ID, FAR action and buffered packet to user space
-static int unix_sock_send(struct pdr *pdr, void *buf, u32 len, bool is3GPP)
+static int unix_sock_send(struct pdr *pdr, void *buf, u32 len, int addrType)
 {
     struct msghdr msg;
     struct kvec *kov;
@@ -323,7 +323,8 @@ static int unix_sock_send(struct pdr *pdr, void *buf, u32 len, bool is3GPP)
     u8  type_hdr[1] = {TYPE_BUFFER};
     u64 self_seid_hdr[1] = {pdr->seid};
     // FAR-PROBLEM
-    u16 self_hdr[2] = {pdr->id, pdr->far[(is3GPP)?0:1]->action};
+
+    u16 self_hdr[2] = {pdr->id, pdr->far[(addrType!=AT_MPTCP_ADDR_NON3GPP)?0:1]->action};
 
     if (!pdr->sock_for_buf) {
         GTP5G_ERR(NULL, "Failed Socket buffer is NULL\n");
@@ -541,17 +542,39 @@ static int gtp5g_drop_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
 
 static int gtp5g_fwd_skb_ipv4(struct sk_buff *skb,
     struct net_device *dev, struct gtp5g_pktinfo *pktinfo,
-    struct pdr *pdr, bool is3GPP)
+    struct pdr *pdr, int addrType)
 {
     struct rtable *rt;
     struct flowi4 fl4;
     struct iphdr *iph = ip_hdr(skb);
     struct outer_header_creation *hdr_creation;
-    struct far *far = pdr->far[(is3GPP)?0:1];
+    struct far *far;
+
+    switch (addrType)
+    {
+    case AT_MPTCP_ADDR_3GPP:
+        far = pdr->far[0];
+        break;
+    case AT_MPTCP_ADDR_NON3GPP:
+        far = pdr->far[1];
+        break;
+    case AT_DN_ADDR:
+        /* Try 3GPP FAR first, or change to Non3GPP in the case that only N3IWF has outer header creation.*/
+        far = pdr->far[0];
+        if (!(far && far->fwd_param && far->fwd_param->hdr_creation)) {
+            GTP5G_WAR(dev, "Unknown RAN address in FAR[%u], change to another FAR in same PDR[%u]\n", far->id, pdr->id);
+            // Will check if it's legal later
+            far = pdr->far[1];
+        }
+        break;
+    default:
+        GTP5G_ERR(dev, "Unknown RAN/N3IWF address type in FAR[%u]\n", far->id);
+        goto err;
+    }
 
     if (!(far && far->fwd_param &&
         far->fwd_param->hdr_creation)) {
-        GTP5G_ERR(dev, "Unknown RAN address in FAR[%u]\n", far->id);
+        GTP5G_ERR(dev, "Unknown RAN address in FAR[%u] PDR[%u]\n", far->id, pdr->id);
         goto err;
     }
 
@@ -598,10 +621,10 @@ err:
 }
 
 static int gtp5g_buf_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
-    struct pdr *pdr, bool is3GPP)
+    struct pdr *pdr, int addrType)
 {
     // TODO: handle nonlinear part
-    if (unix_sock_send(pdr, skb->data, skb_headlen(skb), is3GPP) < 0) {
+    if (unix_sock_send(pdr, skb->data, skb_headlen(skb), addrType) < 0) {
         GTP5G_ERR(dev, "Failed to send skb to unix domain socket PDR(%u)", pdr->id);
         ++pdr->dl_drop_cnt;
     }
@@ -618,16 +641,16 @@ int gtp5g_handle_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
     struct far *far;
     //struct gtp5g_qer *qer;
     struct iphdr *iph;
-    bool is3GPP = true;
+    int addrType;
 
     /* Read the IP destination address and resolve the PDR.
      * Prepend PDR header with TEI/TID from PDR.
      */
     iph = ip_hdr(skb);
     if (gtp->role == GTP5G_ROLE_UPF)
-        pdr = pdr_find_by_ipv4(gtp, skb, 0, iph->daddr, &is3GPP);
+        pdr = pdr_find_by_ipv4(gtp, skb, 0, iph->daddr, &addrType);
     else
-        pdr = pdr_find_by_ipv4(gtp, skb, 0, iph->saddr, &is3GPP);
+        pdr = pdr_find_by_ipv4(gtp, skb, 0, iph->saddr, &addrType);
 
     if (!pdr) {
         GTP5G_ERR(dev, "no PDR found for %pI4, skip\n", &iph->daddr);
@@ -642,7 +665,18 @@ int gtp5g_handle_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
     //            __func__, __LINE__, qer->id, qer->qfi);
     //}
 
-    far = pdr->far[(is3GPP?0:1)];
+    switch(addrType){
+        case AT_MPTCP_ADDR_3GPP:
+            far = pdr->far[0];
+            break;
+        case AT_MPTCP_ADDR_NON3GPP:
+            far = pdr->far[1];
+            break;
+        case AT_DN_ADDR:
+            far = pdr->far[1];
+            break;
+    }
+
     if (far) {
         // One and only one of the DROP, FORW and BUFF flags shall be set to 1.
         // The NOCP flag may only be set if the BUFF flag is set.
@@ -651,9 +685,9 @@ int gtp5g_handle_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
         case FAR_ACTION_DROP:
             return gtp5g_drop_skb_ipv4(skb, dev, pdr);
         case FAR_ACTION_FORW:
-            return gtp5g_fwd_skb_ipv4(skb, dev, pktinfo, pdr, is3GPP);
+            return gtp5g_fwd_skb_ipv4(skb, dev, pktinfo, pdr, addrType);
         case FAR_ACTION_BUFF:
-            return gtp5g_buf_skb_ipv4(skb, dev, pdr, is3GPP);
+            return gtp5g_buf_skb_ipv4(skb, dev, pdr, addrType);
         default:
             GTP5G_ERR(dev, "Unspec apply action(%u) in FAR(%u) and related to PDR(%u)",
                 far->action, far->id, pdr->id);
