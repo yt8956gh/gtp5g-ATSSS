@@ -10,6 +10,7 @@
 #include "genl.h"
 #include "genl_pdr.h"
 #include "pdr.h"
+#include "log.h"
 #include "api_version.h"
 
 #include <linux/rculist.h>
@@ -337,6 +338,8 @@ static int pdr_fill(struct pdr *pdr, struct gtp5g_dev *gtp, struct genl_info *in
     char *str;
     int err;
 
+    GTP5G_ERR(NULL, "Enter pdr_fill\n");
+
     if (!pdr)
         return -EINVAL;
 
@@ -393,14 +396,24 @@ static int pdr_fill(struct pdr *pdr, struct gtp5g_dev *gtp, struct genl_info *in
         far_set_pdr(pdr->seid, *pdr->far_id[1], &pdr->hlist_related_far, gtp);
     }
 
-    pdr->mptcp_ue_addr_3gpp.s_addr = 0;
     if (info->attrs[GTP5G_UE_MPTCP_3GPP_ADDR_IPV4]) {
-        pdr->mptcp_ue_addr_3gpp.s_addr = nla_get_u32(info->attrs[GTP5G_UE_MPTCP_3GPP_ADDR_IPV4]);
+        if (!pdr->mptcp_ue_addr_3gpp) {
+            pdr->mptcp_ue_addr_3gpp = kzalloc(sizeof(*pdr->mptcp_ue_addr_3gpp), GFP_ATOMIC);
+            if (!pdr->mptcp_ue_addr_3gpp)
+                return -ENOMEM;
+        }
+        pdr->mptcp_ue_addr_3gpp->s_addr = nla_get_be32(info->attrs[GTP5G_UE_MPTCP_3GPP_ADDR_IPV4]);
+        GTP5G_ERR(NULL, "Get GTP5G_UE_MPTCP_3GPP_ADDR_IPV4: %u\n", pdr->mptcp_ue_addr_3gpp->s_addr);
     }
 
-    pdr->mptcp_ue_addr_non_3gpp.s_addr = 0;
     if (info->attrs[GTP5G_UE_MPTCP_NON3GPP_ADDR_IPV4]) {
-        pdr->mptcp_ue_addr_non_3gpp.s_addr = nla_get_u32(info->attrs[GTP5G_UE_MPTCP_NON3GPP_ADDR_IPV4]);
+        if (!pdr->mptcp_ue_addr_non_3gpp) {
+            pdr->mptcp_ue_addr_non_3gpp = kzalloc(sizeof(*pdr->mptcp_ue_addr_non_3gpp), GFP_ATOMIC);
+            if (!pdr->mptcp_ue_addr_non_3gpp)
+                return -ENOMEM;
+        }
+        pdr->mptcp_ue_addr_non_3gpp->s_addr = nla_get_be32(info->attrs[GTP5G_UE_MPTCP_NON3GPP_ADDR_IPV4]);
+        GTP5G_ERR(NULL, "Get GTP5G_UE_MPTCP_NON3GPP_ADDR_IPV4: %u\n", pdr->mptcp_ue_addr_non_3gpp->s_addr);
     }
 
     if (info->attrs[GTP5G_PDR_QER_ID]) {
@@ -412,6 +425,17 @@ static int pdr_fill(struct pdr *pdr, struct gtp5g_dev *gtp, struct genl_info *in
         *pdr->qer_id = nla_get_u32(info->attrs[GTP5G_PDR_QER_ID]);
         pdr->qer = find_qer_by_id(gtp, pdr->seid, *pdr->qer_id);
         qer_set_pdr(pdr->seid, *pdr->qer_id, &pdr->hlist_related_qer, gtp);
+    }
+
+    /* Just check if the PDR is ATSSS MA-PDU DL*/
+    if (info->attrs[GTP5G_PDR_MAR_ID]) {
+        if (!pdr->mar_id) {
+            pdr->mar_id = kzalloc(sizeof(*pdr->mar_id), GFP_ATOMIC);
+            if (!pdr->mar_id)
+                return -ENOMEM;
+        }
+        *pdr->mar_id = nla_get_u16(info->attrs[GTP5G_PDR_MAR_ID]);
+        GTP5G_ERR(NULL, "Get GTP5G_PDR_MAR_ID: %u\n", *pdr->mar_id);
     }
 
     // Problem?

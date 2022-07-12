@@ -24,6 +24,9 @@ enum gtp5g_pdr_attrs {
     GTP5G_PDR_SEID,
     GTP5G_PDR_URR_ID,
 
+    /* For ATSSS */
+    GTP5G_PDR_MAR_ID,
+
     /* Not in 3GPP spec, just used for routing */
     GTP5G_UE_MPTCP_3GPP_ADDR_IPV4,
 

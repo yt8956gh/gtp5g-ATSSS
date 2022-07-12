@@ -34,9 +34,9 @@ enum msg_type {
 static void gtp5g_encap_disable_locked(struct sock *);
 static int gtp5g_encap_recv(struct sock *, struct sk_buff *);
 static int gtp1u_udp_encap_recv(struct gtp5g_dev *, struct sk_buff *);
-static int gtp5g_rx(struct pdr *, struct sk_buff *, unsigned int, unsigned int, bool);
+static int gtp5g_rx(struct pdr *, struct sk_buff *, unsigned int, unsigned int);
 static int gtp5g_fwd_skb_encap(struct sk_buff *, struct net_device *,
-        unsigned int, struct pdr *, bool);
+        unsigned int, struct pdr *);
 static int unix_sock_send(struct pdr *, void *, u32, int);
 static int gtp5g_fwd_skb_ipv4(struct sk_buff *,
     struct net_device *, struct gtp5g_pktinfo *,
@@ -226,7 +226,6 @@ static int  gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
     struct gtpv1_hdr *gtpv1;
     struct pdr *pdr;
     int gtpv1_hdr_len;
-    bool is3GPP = true;
 
     if (!pskb_may_pull(skb, hdrlen)) {
         GTP5G_ERR(gtp->dev, "Failed to pull skb length %#x\n", hdrlen);
@@ -269,7 +268,7 @@ static int  gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
 
     // recalculation gtpv1
     gtpv1 = (struct gtpv1_hdr *)(skb->data + sizeof(struct udphdr));
-    pdr = pdr_find_by_gtp1u(gtp, skb, hdrlen, gtpv1->tid, &is3GPP);
+    pdr = pdr_find_by_gtp1u(gtp, skb, hdrlen, gtpv1->tid);
     // pskb_may_pull() is called in pdr_find_by_gtp1u(), so gtpv1 may be invalidated here.
     // recalculation gtpv1
     gtpv1 = (struct gtpv1_hdr *)(skb->data + sizeof(struct udphdr));
@@ -278,7 +277,7 @@ static int  gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
         return -1;
     }
 
-    return gtp5g_rx(pdr, skb, hdrlen, gtp->role, is3GPP);
+    return gtp5g_rx(pdr, skb, hdrlen, gtp->role);
 }
 
 static int gtp5g_drop_skb_encap(struct sk_buff *skb, struct net_device *dev,
@@ -290,7 +289,7 @@ static int gtp5g_drop_skb_encap(struct sk_buff *skb, struct net_device *dev,
 }
 
 static int gtp5g_buf_skb_encap(struct sk_buff *skb, struct net_device *dev,
-    unsigned int hdrlen, struct pdr *pdr, bool is3GPP)
+    unsigned int hdrlen, struct pdr *pdr)
 {
     // Get rid of the GTP-U + UDP headers.
     if (iptunnel_pull_header(skb,
@@ -301,7 +300,10 @@ static int gtp5g_buf_skb_encap(struct sk_buff *skb, struct net_device *dev,
         return -1;
     }
 
-    if (unix_sock_send(pdr, skb->data, skb_headlen(skb), is3GPP) < 0) {
+    /* UL PDU and MA-PDU session only one FAR,
+    ** so unix_sock_send access far[0]AT_UL_IGNORE_ADDR when AT_UL_IGNORE_ADDR
+    */
+    if (unix_sock_send(pdr, skb->data, skb_headlen(skb), AT_UL_IGNORE_ADDR) < 0) {
         GTP5G_ERR(dev, "Failed to send skb to unix domain socket PDR(%u)", pdr->id);
         ++pdr->ul_drop_cnt;
     }
@@ -397,10 +399,10 @@ static int unix_sock_send(struct pdr *pdr, void *buf, u32 len, int addrType)
 }
 
 static int gtp5g_rx(struct pdr *pdr, struct sk_buff *skb,
-    unsigned int hdrlen, unsigned int role, bool is3GPP)
+    unsigned int hdrlen, unsigned int role)
 {
     int rt = -1;
-    struct far *far = pdr->far[(is3GPP)?0:1];
+    struct far *far = pdr->far[0]; // ATSSS UL only one FAR
 
     // struct qer *qer = pdr->qer;
 
@@ -428,10 +430,10 @@ static int gtp5g_rx(struct pdr *pdr, struct sk_buff *skb,
                 rt = gtp5g_drop_skb_encap(skb, pdr->dev, pdr);
                 break;
             case FAR_ACTION_FORW:
-                rt = gtp5g_fwd_skb_encap(skb, pdr->dev, hdrlen, pdr, is3GPP);
+                rt = gtp5g_fwd_skb_encap(skb, pdr->dev, hdrlen, pdr);
                 break;
             case FAR_ACTION_BUFF:
-                rt = gtp5g_buf_skb_encap(skb, pdr->dev, hdrlen, pdr, is3GPP);
+                rt = gtp5g_buf_skb_encap(skb, pdr->dev, hdrlen, pdr);
                 break;
             default:
                 GTP5G_ERR(pdr->dev, "Unhandled apply action(%u) in FAR(%u) and related to PDR(%u)\n",
@@ -450,9 +452,9 @@ out:
 }
 
 static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
-    unsigned int hdrlen, struct pdr *pdr, bool is3GPP)
+    unsigned int hdrlen, struct pdr *pdr)
 {
-    struct far *far = pdr->far[(is3GPP)?0:1];
+    struct far *far = pdr->far[0];
     struct forwarding_parameter *fwd_param = far->fwd_param;
     struct outer_header_creation *hdr_creation;
     struct forwarding_policy *fwd_policy;

@@ -8,6 +8,7 @@
 #include "seid.h"
 #include "hash.h"
 #include "genl.h"
+#include "log.h"
 
 static void seid_pdr_id_to_hex_str(u64 seid_int, u16 pdr_id, char *buff)
 {
@@ -237,7 +238,7 @@ mismatch:
 }
 
 struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
-        unsigned int hdrlen, u32 teid, bool *is3GPP)
+        unsigned int hdrlen, u32 teid)
 {
 #ifdef MATCH_IP
     struct iphdr *outer_iph;
@@ -260,11 +261,16 @@ struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
     iph = (struct iphdr *)(skb->data + hdrlen);
     target_addr = (gtp->role == GTP5G_ROLE_UPF ? &iph->saddr : &iph->daddr);
 
+    // GTP5G_ERR(gtp->dev, "target_addr=%u\n", *target_addr);
+
     head = &gtp->i_teid_hash[u32_hashfn(teid) % gtp->hash_size];
     hlist_for_each_entry_rcu(pdr, head, hlist_i_teid) {
         pdi = pdr->pdi;
         if (!pdi)
             continue;
+
+        // GTP5G_ERR(gtp->dev, "PDR ID=%u DN Addr=%u, 3GPP MPTCP Addr=%u, Non-3GPP MPTCP Addr=%u\n", pdr->id,
+        //     pdi->ue_addr_ipv4->s_addr, pdr->mptcp_ue_addr_3gpp->s_addr, pdr->mptcp_ue_addr_non_3gpp->s_addr);
 
         // GTP-U packet must check teid
         if (!(pdi->f_teid && pdi->f_teid->teid == teid))
@@ -284,17 +290,15 @@ struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
         /* For Supporting ATSSS, also match UE link-specific IP@3GPP and IP@Non-3GPP (MPTCP IP Addresses on UE side)
         ** Refer to TS 29.244 Annex E Figure E.3.1-1 IP Translation Mode
         */
-        if (pdr->af == AF_INET){
-            if (pdi->ue_addr_ipv4 && *target_addr == pdi->ue_addr_ipv4->s_addr){
-                *is3GPP = true; // Tackle as default PDR through 3GPP
-            }else if(pdr->mptcp_ue_addr_3gpp.s_addr && *target_addr == pdr->mptcp_ue_addr_3gpp.s_addr){
-                *is3GPP = true;
-            }else if(pdr->mptcp_ue_addr_non_3gpp.s_addr && *target_addr == pdr->mptcp_ue_addr_non_3gpp.s_addr){
-                *is3GPP = false;
-            }else{
-                continue;
-            }
+
+
+        if (pdr->af == AF_INET && \
+            (pdi->ue_addr_ipv4 && *target_addr != pdi->ue_addr_ipv4->s_addr) && \
+            (pdr->mptcp_ue_addr_3gpp && *target_addr != pdr->mptcp_ue_addr_3gpp->s_addr) && \
+            (pdr->mptcp_ue_addr_non_3gpp && *target_addr != pdr->mptcp_ue_addr_non_3gpp->s_addr)){
+            continue;
         }
+
 
         if (pdi->sdf)
             if (!sdf_filter_match(pdi->sdf, skb, hdrlen, GTP5G_SDF_FILTER_OUT))
@@ -315,8 +319,15 @@ struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *gtp, struct sk_buff *skb,
 
     head = &gtp->addr_hash[ipv4_hashfn(addr) % gtp->hash_size];
 
+    // GTP5G_ERR(gtp->dev, "target_addr=%u\n", addr);
+
     hlist_for_each_entry_rcu(pdr, head, hlist_addr) {
         pdi = pdr->pdi;
+
+        // GTP5G_ERR(gtp->dev, "PDR ID=%u DN Addr=%u, 3GPP MPTCP Addr=%u, Non-3GPP MPTCP Addr=%u\n", pdr->id,
+        //     (pdi->ue_addr_ipv4)?pdi->ue_addr_ipv4->s_addr:0,
+        //     (pdr->mptcp_ue_addr_3gpp)?pdr->mptcp_ue_addr_3gpp->s_addr:0,
+        //     (pdr->mptcp_ue_addr_non_3gpp)?pdr->mptcp_ue_addr_non_3gpp->s_addr:0);
 
         // TODO: Move the value we check into first level
         /* For supporting ATSSS, also match UE link-specific IP@3GPP and
@@ -326,9 +337,9 @@ struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *gtp, struct sk_buff *skb,
         if (pdr->af == AF_INET){
             if (pdi->ue_addr_ipv4 && addr == pdi->ue_addr_ipv4->s_addr){
                 *addrType = AT_DN_ADDR; // If addr is DN IP Address, traffic will go through 3GPP by default.
-            }else if(pdr->mptcp_ue_addr_3gpp.s_addr && addr == pdr->mptcp_ue_addr_3gpp.s_addr){
+            }else if(pdr->mptcp_ue_addr_3gpp && addr == pdr->mptcp_ue_addr_3gpp->s_addr){
                 *addrType = AT_MPTCP_ADDR_3GPP;
-            }else if(pdr->mptcp_ue_addr_non_3gpp.s_addr && addr == pdr->mptcp_ue_addr_non_3gpp.s_addr){
+            }else if(pdr->mptcp_ue_addr_non_3gpp && addr == pdr->mptcp_ue_addr_non_3gpp->s_addr){
                 *addrType = AT_MPTCP_ADDR_NON3GPP;
             }else{
                 continue;
@@ -387,18 +398,49 @@ void pdr_update_hlist_table(struct pdr *pdr, struct gtp5g_dev *gtp)
             hlist_add_head_rcu(&pdr->hlist_i_teid, head);
         else
             hlist_add_behind_rcu(&pdr->hlist_i_teid, &last_ppdr->hlist_i_teid);
-    } else if (pdi->ue_addr_ipv4) {
-        last_ppdr = NULL;
-        head = &gtp->addr_hash[u32_hashfn(pdi->ue_addr_ipv4->s_addr) % gtp->hash_size];
-        hlist_for_each_entry_rcu(ppdr, head, hlist_addr) {
-            if (pdr->precedence > ppdr->precedence)
-                last_ppdr = ppdr;
+    } else {
+        // TODO: refactor
+        if (pdi->ue_addr_ipv4) {
+            last_ppdr = NULL;
+            head = &gtp->addr_hash[u32_hashfn(pdi->ue_addr_ipv4->s_addr) % gtp->hash_size];
+            hlist_for_each_entry_rcu(ppdr, head, hlist_addr) {
+                if (pdr->precedence > ppdr->precedence)
+                    last_ppdr = ppdr;
+                else
+                    break;
+            }
+            if (!last_ppdr)
+                hlist_add_head_rcu(&pdr->hlist_addr, head);
             else
-                break;
+                hlist_add_behind_rcu(&pdr->hlist_addr, &last_ppdr->hlist_addr);
         }
-        if (!last_ppdr)
-            hlist_add_head_rcu(&pdr->hlist_addr, head);
-        else
-            hlist_add_behind_rcu(&pdr->hlist_addr, &last_ppdr->hlist_addr);
+        if (pdr->mar_id && pdr->mptcp_ue_addr_3gpp){
+            last_ppdr = NULL;
+            head = &gtp->addr_hash[u32_hashfn(pdr->mptcp_ue_addr_3gpp->s_addr) % gtp->hash_size];
+            hlist_for_each_entry_rcu(ppdr, head, hlist_addr) {
+                if (pdr->precedence > ppdr->precedence)
+                    last_ppdr = ppdr;
+                else
+                    break;
+            }
+            if (!last_ppdr)
+                hlist_add_head_rcu(&pdr->hlist_addr, head);
+            else
+                hlist_add_behind_rcu(&pdr->hlist_addr, &last_ppdr->hlist_addr);
+        }
+        if (pdr->mar_id && pdr->mptcp_ue_addr_non_3gpp){
+            last_ppdr = NULL;
+            head = &gtp->addr_hash[u32_hashfn(pdr->mptcp_ue_addr_non_3gpp->s_addr) % gtp->hash_size];
+            hlist_for_each_entry_rcu(ppdr, head, hlist_addr) {
+                if (pdr->precedence > ppdr->precedence)
+                    last_ppdr = ppdr;
+                else
+                    break;
+            }
+            if (!last_ppdr)
+                hlist_add_head_rcu(&pdr->hlist_addr, head);
+            else
+                hlist_add_behind_rcu(&pdr->hlist_addr, &last_ppdr->hlist_addr);
+        }
     }
 }

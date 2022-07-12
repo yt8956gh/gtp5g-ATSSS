@@ -19,6 +19,7 @@ enum addr_type {
     AT_MPTCP_ADDR_3GPP = 1,
     AT_MPTCP_ADDR_NON3GPP,
     AT_DN_ADDR,
+    AT_UL_IGNORE_ADDR,
 };
 
 struct local_f_teid {
@@ -72,6 +73,7 @@ struct pdr {
     u32 *qer_id;
     struct qer *qer;
     u32 *urr_id;
+    u16 *mar_id;
     struct urr *urr;
 
     /* deprecated: AF_UNIX socket for buffer */
@@ -79,7 +81,9 @@ struct pdr {
     struct socket *sock_for_buf;
 
     u16 af;
-    struct in_addr role_addr_ipv4, mptcp_ue_addr_3gpp, mptcp_ue_addr_non_3gpp;
+    struct in_addr role_addr_ipv4;
+    /* For ATSSS */
+    struct in_addr *mptcp_ue_addr_3gpp, *mptcp_ue_addr_non_3gpp;
     struct sock *sk;
     struct net_device *dev;
     struct rcu_head rcu_head;
@@ -98,7 +102,7 @@ struct pdr {
 extern void pdr_context_delete(struct pdr *);
 extern struct pdr *find_pdr_by_id(struct gtp5g_dev *, u64, u16);
 extern struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *, struct sk_buff *,
-        unsigned int, u32, bool *);
+        unsigned int, u32);
 extern struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *, struct sk_buff *,
         unsigned int, __be32, int *);
 
