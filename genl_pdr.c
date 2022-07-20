@@ -338,8 +338,6 @@ static int pdr_fill(struct pdr *pdr, struct gtp5g_dev *gtp, struct genl_info *in
     char *str;
     int err;
 
-    GTP5G_ERR(NULL, "Enter pdr_fill\n");
-
     if (!pdr)
         return -EINVAL;
 
