@@ -268,11 +268,6 @@ struct pdr *pdr_find_by_gtp1u(struct gtp5g_dev *gtp, struct sk_buff *skb,
         pdi = pdr->pdi;
         if (!pdi)
             continue;
-        GTP5G_ERR(gtp->dev, "PDR ID=%u DN Addr=%u, 3GPP MPTCP Addr=%u, Non-3GPP MPTCP Addr=%u\n",
-            pdr->id,
-            (pdi->ue_addr_ipv4)?pdi->ue_addr_ipv4->s_addr:0,
-            (pdr->mptcp_ue_addr_3gpp)?pdr->mptcp_ue_addr_3gpp->s_addr:0,
-            (pdr->mptcp_ue_addr_non_3gpp)?pdr->mptcp_ue_addr_non_3gpp->s_addr:0);
         // GTP-U packet must check teid
         if (!(pdi->f_teid && pdi->f_teid->teid == teid))
             continue;
@@ -324,12 +319,6 @@ struct pdr *pdr_find_by_ipv4(struct gtp5g_dev *gtp, struct sk_buff *skb,
 
     hlist_for_each_entry_rcu(pdr, head, hlist_addr) {
         pdi = pdr->pdi;
-
-        // GTP5G_ERR(gtp->dev, "PDR ID=%u DN Addr=%u, 3GPP MPTCP Addr=%u, Non-3GPP MPTCP Addr=%u\n", pdr->id,
-        //     (pdi->ue_addr_ipv4)?pdi->ue_addr_ipv4->s_addr:0,
-        //     (pdr->mptcp_ue_addr_3gpp)?pdr->mptcp_ue_addr_3gpp->s_addr:0,
-        //     (pdr->mptcp_ue_addr_non_3gpp)?pdr->mptcp_ue_addr_non_3gpp->s_addr:0);
-
         // TODO: Move the value we check into first level
         /* For supporting ATSSS, also match UE link-specific IP@3GPP and
         ** IP@Non-3GPP (MPTCP IP Addresses on UE side) when tackle DL traffic.
